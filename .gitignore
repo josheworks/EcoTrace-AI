@@ -29,6 +29,9 @@ ENV/
 *.db
 *.sqlite
 ecotrace.db
+*.db-shm
+*.db-wal
+*.db-journal
 
 # IDEs and editors
 .vscode/
