@@ -188,3 +188,17 @@ class EcoTrace:
     def clear(self) -> None:
         """Clear all stored events."""
         self._storage.clear()
+
+    def launch_dashboard(
+        self, host: str = "127.0.0.1", port: int = 8000, auto_seed: bool = False
+    ) -> None:
+        """Launch the EcoTrace developer observability dashboard web server."""
+        from ecotrace.dashboard.app import run_dashboard
+
+        db_path = (
+            self._config.storage_path
+            if self._config.storage == "sqlite"
+            else "ecotrace.db"
+        )
+        run_dashboard(host=host, port=port, db_path=db_path, auto_seed=auto_seed)
+

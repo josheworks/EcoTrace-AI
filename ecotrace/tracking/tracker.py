@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List, Optional, Union
 
+from ecotrace.analysis.duplicates import DuplicateDetector
 from ecotrace.capture.request import RequestCapture
 from ecotrace.capture.response import ResponseCapture
 from ecotrace.storage.base import BaseStorage
@@ -35,6 +36,7 @@ class Tracker:
         self._storage = storage
         self._session = session or Session()
         self._emitter = EventEmitter()
+        self._duplicate_detector = DuplicateDetector()
 
     @property
     def session(self) -> Session:
@@ -87,11 +89,19 @@ class Tracker:
             event.total_tokens = response.total_tokens
             event.latency_ms = latency_ms if latency_ms is not None else response.latency_ms
 
+        # Check duplicate status
+        dup_check = self._duplicate_detector.check(event)
+        self._duplicate_detector.index_event(event)
+
         # Persist
         self._storage.save_event(event)
         self._session.increment()
 
-        result = TrackingResult(event=event)
+        result = TrackingResult(
+            event=event,
+            is_duplicate=dup_check.is_duplicate,
+            duplicate_count=dup_check.occurrence_count - 1 if dup_check.is_duplicate else 0,
+        )
 
         self._emitter.emit("after_track", {"result": result.to_dict()})
 
