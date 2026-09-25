@@ -1,10 +1,15 @@
-"""EcoTrace client - Public API."""
+"""EcoTrace client - Public API.
+
+Provides the primary developer interface for tracking AI requests/responses and
+running unified workload analysis reports.
+"""
 
 from __future__ import annotations
 
 import time
 from typing import Any, Callable, Dict, List, Optional, Union, overload
 
+from ecotrace.analysis.report import WorkloadAnalyzer, WorkloadReport
 from ecotrace.capture.request import RequestCapture
 from ecotrace.capture.response import ResponseCapture
 from ecotrace.config import EcoTraceConfig
@@ -27,11 +32,9 @@ class EcoTrace:
 
     Example:
         >>> eco = EcoTrace()
-        >>> result = eco.track(
-        ...     provider="openai",
-        ...     model="gpt-4o-mini",
-        ...     prompt="Hello AI"
-        ... )
+        >>> eco.track(provider="openai", model="gpt-4o-mini", prompt="Hello AI")
+        >>> report = eco.analyze()
+        >>> print(report.efficiency.score)
     """
 
     def __init__(
@@ -64,7 +67,7 @@ class EcoTrace:
         self._session = Session(project=self._config.project)
         self._tracker = Tracker(storage=self._storage, session=self._session)
 
-        # Register providers
+        # Register default providers
         self._providers: Dict[str, BaseProvider] = {
             "openai": OpenAIProvider(),
             "gemini": GeminiProvider(),
@@ -74,17 +77,17 @@ class EcoTrace:
 
     @property
     def config(self) -> EcoTraceConfig:
-        """Return the current SDK configuration."""
+        """Return current SDK configuration."""
         return self._config
 
     @property
     def tracker(self) -> Tracker:
-        """Return the underlying tracker."""
+        """Return underlying tracker."""
         return self._tracker
 
     @property
     def storage(self) -> BaseStorage:
-        """Return the underlying storage backend."""
+        """Return underlying storage backend."""
         return self._storage
 
     def register_provider(self, provider: BaseProvider) -> None:
@@ -112,16 +115,15 @@ class EcoTrace:
         Args:
             provider: Provider name (e.g. 'openai', 'gemini', 'groq').
             model: Model name (e.g. 'gpt-4o-mini').
-            prompt: User prompt or list of messages.
-            response: Optional raw or normalized response.
-            latency_ms: Optional latency in milliseconds.
-            metadata: Additional metadata dictionary.
+            prompt: User prompt string or list of message dicts.
+            response: Optional raw API response or response text string.
+            latency_ms: Optional request latency in milliseconds.
+            metadata: Optional metadata dictionary.
 
         Returns:
-            TrackingResult object containing the normalized event.
+            TrackingResult object containing the persisted event.
         """
         if not self._config.enabled:
-            # Return an untracked dummy result when SDK is disabled
             dummy_event = RequestEvent(
                 provider=provider,
                 model=model,
@@ -149,11 +151,31 @@ class EcoTrace:
             latency_ms=latency_ms,
         )
 
+    def analyze(
+        self,
+        similarity_threshold: float = 0.75,
+        limit: int = 1000,
+    ) -> WorkloadReport:
+
+        """Run full multi-signal workload analysis on all tracked events in current session.
+
+        Args:
+            similarity_threshold: Cosine similarity threshold for semantic redundancy (default 0.85).
+            limit: Maximum number of events to analyze from storage.
+
+        Returns:
+            WorkloadReport containing duplicate detection, semantic similarity, token waste,
+            latency percentiles, efficiency score, recommendations, savings, and EcoScore.
+        """
+        events = self.get_events(limit=limit)
+        analyzer = WorkloadAnalyzer(similarity_threshold=similarity_threshold)
+        return analyzer.analyze_events(events, project=self._config.project)
+
     def get_events(
         self,
         provider: Optional[str] = None,
         model: Optional[str] = None,
-        limit: int = 100,
+        limit: int = 1000,
     ) -> List[RequestEvent]:
         """Retrieve tracked events from storage."""
         return self._storage.get_events(

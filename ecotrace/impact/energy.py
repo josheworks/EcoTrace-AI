@@ -34,6 +34,17 @@ class EnergyEstimate:
     total_tokens: int = 0
     request_count: int = 0
 
+    def to_dict(self) -> dict:
+        """Serialize energy estimate to dictionary."""
+        return {
+            "total_wh": round(self.total_wh, 4),
+            "total_kwh": round(self.total_kwh, 6),
+            "wh_per_1k_tokens": self.wh_per_1k_tokens,
+            "total_tokens": self.total_tokens,
+            "request_count": self.request_count,
+        }
+
+
 
 class EnergyEstimator:
     """Estimates energy consumption of AI workloads.

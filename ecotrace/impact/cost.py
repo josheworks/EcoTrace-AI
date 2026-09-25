@@ -23,17 +23,11 @@ _DEFAULT_PRICING: Dict[str, Dict[str, float]] = {
 class CostEstimate:
     """Cost estimation result.
 
-    Attributes:
-        total_cost_usd: Total estimated cost in USD.
-        input_cost_usd: Cost for input tokens.
-        output_cost_usd: Cost for output tokens.
-        currency: Currency code.
-        model: Model used for estimation.
-        request_count: Number of requests.
+    When no pricing is configured, estimated cost values remain None.
     """
-    total_cost_usd: float = 0.0
-    input_cost_usd: float = 0.0
-    output_cost_usd: float = 0.0
+    total_cost_usd: Optional[float] = None
+    input_cost_usd: Optional[float] = None
+    output_cost_usd: Optional[float] = None
     currency: str = "USD"
     model: str = ""
     request_count: int = 0
@@ -42,13 +36,14 @@ class CostEstimate:
 class CostCalculator:
     """Estimates monetary cost of AI workloads.
 
-    Uses configurable per-model pricing tables.
+    Pricing is intentionally configurable. Unknown models return a transparent
+    None estimate rather than inventing a misleading price.
     """
 
     def __init__(
         self, pricing: Optional[Dict[str, Dict[str, float]]] = None
     ) -> None:
-        self._pricing = pricing or dict(_DEFAULT_PRICING)
+        self._pricing = dict(pricing or {})
 
     def set_pricing(
         self, model: str, input_per_1k: float, output_per_1k: float
@@ -59,25 +54,38 @@ class CostCalculator:
     def estimate(self, events: List[RequestEvent]) -> CostEstimate:
         """Estimate total cost for a list of events.
 
-        Args:
-            events: List of RequestEvent objects.
-
-        Returns:
-            CostEstimate with computed costs.
+        Returns a None total when model pricing is not configured for the workload.
         """
+        if not events:
+            return CostEstimate(total_cost_usd=None, input_cost_usd=None, output_cost_usd=None, request_count=0)
+
         total_input = 0.0
         total_output = 0.0
+        known_models = True
 
         for event in events:
             pricing = self._pricing.get(event.model, {})
+            if not pricing:
+                known_models = False
+                continue
             input_rate = pricing.get("input", 0.0)
             output_rate = pricing.get("output", 0.0)
-
             total_input += (event.input_tokens / 1000) * input_rate
             total_output += (event.output_tokens / 1000) * output_rate
 
+        if not known_models:
+            return CostEstimate(
+                total_cost_usd=None,
+                input_cost_usd=None,
+                output_cost_usd=None,
+                currency="USD",
+                model="",
+                request_count=len(events),
+            )
+
+        total_cost = total_input + total_output
         return CostEstimate(
-            total_cost_usd=round(total_input + total_output, 6),
+            total_cost_usd=round(total_cost, 6),
             input_cost_usd=round(total_input, 6),
             output_cost_usd=round(total_output, 6),
             request_count=len(events),

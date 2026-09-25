@@ -4,6 +4,7 @@ Core pipeline:
 OBSERVE → DETECT → ANALYZE → OPTIMIZE → MEASURE
 """
 
+from ecotrace.analysis.report import WorkloadAnalyzer, WorkloadReport
 from ecotrace.client import EcoTrace
 from ecotrace.config import EcoTraceConfig
 from ecotrace.exceptions import (
@@ -27,6 +28,8 @@ __all__ = [
     "EcoTraceConfig",
     "RequestEvent",
     "TrackingResult",
+    "WorkloadReport",
+    "WorkloadAnalyzer",
     "track",
     "create_app",
     "run_dashboard",
