@@ -112,13 +112,8 @@ class SimilarityPair:
 class SimilarityAnalysisResult:
     """Batch analysis result across a corpus of events.
 
-    Attributes:
-        total_compared: Number of event comparisons evaluated.
-        similar_pair_count: Number of semantically similar pairs detected.
-        similar_pairs: List of SimilarityPair objects.
-        similar_request_ids: Set of request IDs flagged as semantically similar.
-        potential_redundant_tokens: Total tokens consumed by similar requests.
-        method_used: Description of vectorization algorithm used.
+    Notes:
+        Semantic redundancy is treated as a potential signal, not as confirmed waste.
     """
     total_compared: int = 0
     similar_pair_count: int = 0
@@ -126,6 +121,11 @@ class SimilarityAnalysisResult:
     similar_request_ids: Set[str] = field(default_factory=set)
     potential_redundant_tokens: int = 0
     method_used: str = "built-in tfidf/n-gram"
+
+    @property
+    def potential_semantic_redundant_tokens(self) -> int:
+        """Potential semantic redundancy signal, not confirmed token waste."""
+        return self.potential_redundant_tokens
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary."""
@@ -135,6 +135,7 @@ class SimilarityAnalysisResult:
             "similar_pairs": [p.to_dict() for p in self.similar_pairs],
             "similar_request_ids": list(self.similar_request_ids),
             "potential_redundant_tokens": self.potential_redundant_tokens,
+            "potential_semantic_redundant_tokens": self.potential_semantic_redundant_tokens,
             "method_used": self.method_used,
         }
 
@@ -230,30 +231,44 @@ class BuiltInVectorSimilarity:
     }
 
 
+    @staticmethod
+    def _stem_word(word: str) -> str:
+        """Simple suffix trimming for lightweight lexical normalization."""
+        w = word.strip().lower()
+        if len(w) <= 4:
+            return w
+        for suffix in ("ing", "ed", "ers", "es", "s"):
+            if w.endswith(suffix) and len(w) > len(suffix) + 2:
+                return w[: -len(suffix)]
+        return w
+
     @classmethod
     def _content_words(cls, text: str) -> Set[str]:
         """Extract content words excluding common stopwords."""
         words = re.findall(r"\w+", text.lower())
-        return set(w for w in words if w not in cls._STOP_WORDS and len(w) >= 3)
+        stems = {cls._stem_word(w) for w in words if w not in cls._STOP_WORDS and len(w) >= 2}
+        return {w for w in stems if w}
 
     @classmethod
     def _tokenize(cls, text: str) -> List[str]:
-        """Generate word tokens, 4-char stems, and word bigrams."""
+        """Generate normalized word tokens, short stems, and bigrams."""
         words = re.findall(r"\w+", text.lower())
-        tokens: List[str] = list(words)
+        norm_words = [cls._stem_word(w) for w in words if w not in cls._STOP_WORDS and len(w) >= 2]
+        tokens: List[str] = list(norm_words)
 
-        for w in words:
-            if len(w) >= 4 and w not in cls._STOP_WORDS:
+        for w in norm_words:
+            if len(w) >= 4:
                 tokens.append(w[:4])
 
-        for i in range(len(words) - 1):
-            tokens.append(f"{words[i]}_{words[i+1]}")
+        for i in range(len(norm_words) - 1):
+            if norm_words[i] and norm_words[i + 1]:
+                tokens.append(f"{norm_words[i]}_{norm_words[i + 1]}")
 
         return tokens
 
     @classmethod
     def cosine_similarity(cls, text1: str, text2: str) -> float:
-        """Calculate normalized similarity score (0.0 to 1.0) combining Content-Word Overlap & Cosine."""
+        """Calculate a normalized similarity score emphasizing shared intent and semantic overlap."""
         t1 = text1.strip()
         t2 = text2.strip()
 
@@ -266,27 +281,30 @@ class BuiltInVectorSimilarity:
         cw1 = cls._content_words(t1)
         cw2 = cls._content_words(t2)
 
-        content_overlap = 0.0
         if cw1 and cw2:
-            common_cw = cw1 & cw2
-            min_cw = min(len(cw1), len(cw2))
-            if min_cw > 0:
-                content_overlap = len(common_cw) / min_cw
+            shared = cw1 & cw2
+            union = cw1 | cw2
+            content_overlap = len(shared) / len(union) if union else 0.0
+            min_share = len(shared) / min(len(cw1), len(cw2)) if min(len(cw1), len(cw2)) else 0.0
+        else:
+            content_overlap = 0.0
+            min_share = 0.0
 
         vec1 = Counter(cls._tokenize(t1))
         vec2 = Counter(cls._tokenize(t2))
-
         common_tokens = set(vec1.keys()) & set(vec2.keys())
         numerator = sum(vec1[x] * vec2[x] for x in common_tokens)
-
         sum1 = sum(val**2 for val in vec1.values())
         sum2 = sum(val**2 for val in vec2.values())
         denominator = math.sqrt(sum1) * math.sqrt(sum2)
-
         cosine_score = (float(numerator) / denominator) if denominator else 0.0
 
-        # Weighted combination: 60% Content-Word Overlap + 40% Full Vector Cosine
-        combined = (0.6 * content_overlap) + (0.4 * cosine_score)
+        # Strong emphasis on real shared semantic keywords; this catches paraphrases without
+        # treating unrelated prompts as semantically similar.
+        combined = (0.55 * min_share) + (0.25 * content_overlap) + (0.20 * cosine_score)
+        if min_share >= 0.5 and len(cw1 & cw2) >= 2:
+            combined = max(combined, 0.75)
+
         return max(0.0, min(1.0, combined))
 
 

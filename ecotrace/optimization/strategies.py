@@ -171,10 +171,15 @@ class SemanticCachingStrategy(OptimizationStrategy):
 
 
 class ContextReductionStrategy(OptimizationStrategy):
-    """Recommends trimming chat history or summarizing large contexts."""
+    """Recommends trimming context when large or repeated inputs create a potential reduction opportunity."""
 
-    def __init__(self, high_token_threshold: int = 1500) -> None:
+    def __init__(
+        self,
+        high_token_threshold: int = 1500,
+        repetition_threshold: float = 0.5,
+    ) -> None:
         self.threshold = high_token_threshold
+        self.repetition_threshold = repetition_threshold
 
     @property
     def name(self) -> str:
@@ -192,7 +197,6 @@ class ContextReductionStrategy(OptimizationStrategy):
             return StrategyResult(strategy_name=self.name)
 
         high_context_events = [e for e in events if e.input_tokens >= self.threshold]
-
         if not high_context_events:
             return StrategyResult(
                 strategy_name=self.name,
@@ -201,25 +205,48 @@ class ContextReductionStrategy(OptimizationStrategy):
             )
 
         count = len(high_context_events)
-        total_input = sum(e.input_tokens for e in high_context_events)
-        estimated_savable_tokens = int(total_input * 0.25)  # Estimate 25% savings from context pruning
+        average_input_tokens = sum(e.input_tokens for e in high_context_events) / count
+        max_input_tokens = max(e.input_tokens for e in high_context_events)
+        potential_context_tokens_saved = int(sum(e.input_tokens for e in high_context_events) * 0.2)
+
+        recommendation = (
+            f"Potentially reducible context detected in {count} request(s): average input tokens {average_input_tokens:.0f}, "
+            f"max input tokens {max_input_tokens}. Large input prompts and repeated context are spending tokens on history that may be trimmed. "
+            f"Consider summarization, prompt condensation, or history truncation. Potentially reducible context: ~{potential_context_tokens_saved} tokens."
+        )
 
         return StrategyResult(
             strategy_name=self.name,
             applicable=True,
             priority="medium" if count >= 2 else "low",
-            recommendation=(
-                f"Large input context detected in {count} request(s) (>= {self.threshold} input tokens). "
-                f"Consider removing unnecessary system context, summarizing chat history, or truncating history. "
-                f"Estimated potential savings: ~{estimated_savable_tokens} input tokens."
-            ),
-            estimated_savings={"potential_tokens_avoided": estimated_savable_tokens},
-            details={"high_context_request_count": count},
+            recommendation=recommendation,
+            estimated_savings={
+                "potential_context_tokens_saved": potential_context_tokens_saved,
+                "potential_tokens_avoided": potential_context_tokens_saved,
+            },
+            details={
+                "average_input_tokens": round(average_input_tokens, 2),
+                "max_input_tokens": max_input_tokens,
+                "large_context_request_count": count,
+                "potential_context_tokens_saved": potential_context_tokens_saved,
+                "threshold_input_tokens": self.threshold,
+                "assumption": "Large input + repeated/similar context + high token consumption indicates a potential context reduction opportunity, not guaranteed unnecessary context.",
+            },
         )
 
 
 class ModelRightSizingStrategy(OptimizationStrategy):
-    """Recommends using smaller/cheaper models for simple, low-output workloads."""
+    """Only recommends model evaluation when the workload signals suggest a smaller model may fit."""
+
+    def __init__(
+        self,
+        avg_tokens_threshold: int = 600,
+        output_tokens_threshold: int = 150,
+        max_input_tokens_threshold: int = 2000,
+    ) -> None:
+        self.avg_tokens_threshold = avg_tokens_threshold
+        self.output_tokens_threshold = output_tokens_threshold
+        self.max_input_tokens_threshold = max_input_tokens_threshold
 
     @property
     def name(self) -> str:
@@ -236,42 +263,47 @@ class ModelRightSizingStrategy(OptimizationStrategy):
         if not events:
             return StrategyResult(strategy_name=self.name)
 
-        expensive_models = {"gpt-4", "gpt-4o", "gemini-1.5-pro", "claude-3-opus"}
-        candidates = []
-
+        large_model_events = []
         for e in events:
             model_lower = str(e.model).lower()
-            if any(exp in model_lower for exp in expensive_models):
-                # Simple task heuristically identified by short output (< 150 tokens) and small prompt
-                if e.output_tokens > 0 and e.output_tokens < 150:
-                    candidates.append(e)
+            if any(tag in model_lower for tag in ("gpt-4", "gpt-4o", "gemini-1.5-pro", "claude-3-opus")):
+                if e.output_tokens <= self.output_tokens_threshold and e.input_tokens <= self.max_input_tokens_threshold:
+                    large_model_events.append(e)
 
-        if not candidates:
+        if not large_model_events:
             return StrategyResult(
                 strategy_name=self.name,
                 applicable=False,
-                recommendation="No model right-sizing opportunities detected.",
+                recommendation="No clear model right-sizing opportunity detected from the current workload characteristics.",
             )
 
-        count = len(candidates)
+        avg_tokens = sum(e.total_tokens for e in large_model_events) / len(large_model_events)
+        candidates = [e.request_id for e in large_model_events[:5]]
+
         return StrategyResult(
             strategy_name=self.name,
             applicable=True,
-            priority="medium",
+            priority="medium" if avg_tokens < self.avg_tokens_threshold else "low",
             recommendation=(
-                f"Potential model right-sizing opportunity detected in {count} request(s). "
-                f"High-capability models are being used for short-response queries. "
-                f"Consider routing simpler queries to a smaller model (e.g., gpt-4o-mini, gemini-1.5-flash)."
+                "Model right-sizing opportunity detected. The workload contains relatively small and low-complexity requests "
+                "using a larger model. Consider evaluating a smaller model for this workload. Potential impact: lower API cost, "
+                "potentially lower latency, and lower compute usage."
             ),
-            estimated_savings={"eligible_requests": count},
-            details={"candidate_request_ids": [c.request_id for c in candidates[:5]]},
+            estimated_savings={"eligible_requests": len(large_model_events), "avg_tokens_per_request": round(avg_tokens, 2)},
+            details={
+                "candidate_request_ids": candidates,
+                "average_tokens": round(avg_tokens, 2),
+                "output_tokens_threshold": self.output_tokens_threshold,
+                "max_input_tokens_threshold": self.max_input_tokens_threshold,
+                "assumption": "This recommendation is explanatory and does not claim a smaller model is definitively equivalent without additional benchmark evidence.",
+            },
         )
 
 
 class HighLatencyStrategy(OptimizationStrategy):
-    """Recommends optimization for high p95 latency workloads."""
+    """Recommends optimization when p95 latency exceeds a configurable threshold."""
 
-    def __init__(self, latency_threshold_ms: float = 2000.0) -> None:
+    def __init__(self, latency_threshold_ms: float = 1500.0) -> None:
         self.threshold = latency_threshold_ms
 
     @property
@@ -291,26 +323,30 @@ class HighLatencyStrategy(OptimizationStrategy):
 
         lat = latency or LatencyAnalyzer().analyze(events)
 
-        if lat.p95_latency_ms < self.threshold:
+        if lat.p95_latency_ms <= self.threshold:
             return StrategyResult(
                 strategy_name=self.name,
                 applicable=False,
-                recommendation="Workload latency is within acceptable limits.",
+                recommendation="Workload latency is within the configured threshold.",
             )
 
-        potential_reduction_ms = lat.p95_latency_ms - (self.threshold * 0.7)
+        potential_reduction_ms = max(0.0, lat.p95_latency_ms - self.threshold)
 
         return StrategyResult(
             strategy_name=self.name,
             applicable=True,
-            priority="high" if lat.p95_latency_ms > 4000.0 else "medium",
+            priority="high" if lat.p95_latency_ms > (self.threshold * 1.5) else "medium",
             recommendation=(
-                f"High p95 latency detected ({lat.p95_latency_ms:.0f} ms > {self.threshold:.0f} ms). "
-                f"Consider: using faster provider inference, shorter max tokens, response streaming, "
-                f"or caching repeated queries."
+                f"P95 latency: {lat.p95_latency_ms:.0f} ms. Threshold: {self.threshold:.0f} ms. "
+                f"Recommendation: investigate caching, prompt/context reduction, batching, or model right-sizing. "
+                f"EcoTrace is identifying a latency pattern; it does not know the exact root cause from this signal alone."
             ),
             estimated_savings={"latency_improvement_potential_ms": round(potential_reduction_ms, 1)},
-            details={"p95_latency_ms": lat.p95_latency_ms},
+            details={
+                "p95_latency_ms": lat.p95_latency_ms,
+                "threshold_ms": self.threshold,
+                "evidence": "p95 latency above configured threshold",
+            },
         )
 
 

@@ -11,7 +11,11 @@ from typing import Any, Dict, List, Optional
 
 from ecotrace.analysis.duplicates import DuplicateAnalysisResult, DuplicateDetector
 from ecotrace.analysis.latency import LatencyAnalyzer, LatencyStats
-from ecotrace.analysis.similarity import SimilarityAnalysisResult, SimilarityAnalyzer
+from ecotrace.analysis.similarity import (
+    BasicSimilarityAnalyzer,
+    SimilarityAnalysisResult,
+    SimilarityAnalyzer,
+)
 from ecotrace.analysis.tokens import TokenAnalyzer, TokenStats
 from ecotrace.impact.cost import CostCalculator
 from ecotrace.optimization.recommendations import Recommendation, RecommendationEngine
@@ -28,19 +32,17 @@ from ecotrace.storage.models import RequestEvent
 
 @dataclass
 class SavingsEstimate:
-    """Quantified impact of detected waste and optimization potential.
+    """Quantified impact of observed waste and potential optimization opportunities.
 
-    Attributes:
-        requests_avoided: Total requests that can be avoided via caching/deduplication.
-        tokens_avoided: Total tokens saved by eliminating waste.
-        input_tokens_avoided: Input tokens saved.
-        output_tokens_avoided: Output tokens saved.
-        estimated_cost_saved_usd: Estimated cost savings in USD (None if pricing unavailable).
-        latency_improvement_potential_ms: Potential latency reduction in ms.
-        details: Additional context details.
+    Exact duplicate savings are confirmed. Semantic savings are potential only.
     """
+    exact_requests_avoided: int = 0
+    semantic_requests_avoidable: int = 0
     requests_avoided: int = 0
+    exact_tokens_avoided: int = 0
+    semantic_tokens_avoidable: int = 0
     tokens_avoided: int = 0
+    total_potential_tokens_avoided: int = 0
     input_tokens_avoided: int = 0
     output_tokens_avoided: int = 0
     estimated_cost_saved_usd: Optional[float] = None
@@ -50,8 +52,13 @@ class SavingsEstimate:
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary."""
         return {
+            "exact_requests_avoided": self.exact_requests_avoided,
+            "semantic_requests_avoidable": self.semantic_requests_avoidable,
             "requests_avoided": self.requests_avoided,
+            "exact_tokens_avoided": self.exact_tokens_avoided,
+            "semantic_tokens_avoidable": self.semantic_tokens_avoidable,
             "tokens_avoided": self.tokens_avoided,
+            "total_potential_tokens_avoided": self.total_potential_tokens_avoided,
             "input_tokens_avoided": self.input_tokens_avoided,
             "output_tokens_avoided": self.output_tokens_avoided,
             "estimated_cost_saved_usd": (
@@ -72,22 +79,19 @@ class SavingsEstimate:
 class OptimizationSimulation:
     """Hypothetical simulation of workload optimization (BEFORE vs AFTER).
 
-    Attributes:
-        original_requests: Total requests in original workload.
-        optimized_requests: Estimated requests after optimization.
-        requests_avoided: Number of requests avoided.
-        original_tokens: Total tokens in original workload.
-        optimized_tokens: Estimated tokens after optimization.
-        tokens_avoided: Total tokens saved.
-        estimated_cost_saved_usd: Estimated financial savings in USD.
+    This separates confirmed savings from potential savings and explains the assumptions.
     """
     original_requests: int = 0
     optimized_requests: int = 0
     requests_avoided: int = 0
+    request_reduction_percent: float = 0.0
     original_tokens: int = 0
     optimized_tokens: int = 0
     tokens_avoided: int = 0
+    token_reduction_percent: float = 0.0
     estimated_cost_saved_usd: Optional[float] = None
+    assumptions: Dict[str, Any] = field(default_factory=dict)
+    details: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary."""
@@ -95,14 +99,18 @@ class OptimizationSimulation:
             "original_requests": self.original_requests,
             "optimized_requests": self.optimized_requests,
             "requests_avoided": self.requests_avoided,
+            "request_reduction_percent": round(self.request_reduction_percent, 2),
             "original_tokens": self.original_tokens,
             "optimized_tokens": self.optimized_tokens,
             "tokens_avoided": self.tokens_avoided,
+            "token_reduction_percent": round(self.token_reduction_percent, 2),
             "estimated_cost_saved_usd": (
                 round(self.estimated_cost_saved_usd, 6)
                 if self.estimated_cost_saved_usd is not None
                 else None
             ),
+            "assumptions": self.assumptions,
+            "details": self.details,
         }
 
 
@@ -206,23 +214,36 @@ class Optimizer:
         tokens: Optional[TokenStats] = None,
         latency: Optional[LatencyStats] = None,
     ) -> SavingsEstimate:
-        """Quantify potential savings from exact duplicates and semantic redundancy."""
+        """Quantify confirmed exact-duplicate savings and potential semantic savings."""
         if not events:
             return SavingsEstimate()
 
         dup_res = duplicates or DuplicateDetector().analyze(events)
-        tok_res = tokens or TokenAnalyzer().analyze(events, duplicate_result=dup_res)
+        if similarity is None:
+            similarity = BasicSimilarityAnalyzer().analyze_corpus(
+                events, exclude_ids=dup_res.duplicate_event_ids
+            )
+        tok_res = tokens or TokenAnalyzer().analyze(
+            events, duplicate_result=dup_res, similarity_result=similarity
+        )
         lat_res = latency or LatencyAnalyzer().analyze(events)
 
-        requests_avoided = dup_res.duplicate_count
-        dup_tokens_avoided = dup_res.wasted_total_tokens
-        dup_in_avoided = dup_res.wasted_input_tokens
-        dup_out_avoided = dup_res.wasted_output_tokens
+        exact_requests_avoided = dup_res.duplicate_count
+        exact_tokens_avoided = dup_res.wasted_total_tokens
+        exact_input_tokens_avoided = dup_res.wasted_input_tokens
+        exact_output_tokens_avoided = dup_res.wasted_output_tokens
 
-        sim_tokens_avoided = similarity.potential_redundant_tokens if similarity else 0
-        total_tokens_avoided = dup_tokens_avoided + sim_tokens_avoided
+        semantic_requests_avoidable = (
+            similarity.similar_pair_count if similarity else 0
+        )
+        semantic_tokens_avoidable = (
+            similarity.potential_redundant_tokens if similarity else 0
+        )
+        total_potential_tokens_avoided = exact_tokens_avoided + semantic_tokens_avoidable
 
-        # Cost estimation if pricing is available
+        total_requests_avoided = exact_requests_avoided
+        total_tokens_avoided = exact_tokens_avoided
+
         cost_saved: Optional[float] = None
         if self._cost_calculator and dup_res.duplicate_event_ids:
             dup_events = [e for e in events if e.request_id in dup_res.duplicate_event_ids]
@@ -234,12 +255,24 @@ class Optimizer:
             lat_imp = lat_res.p95_latency_ms - 1500.0
 
         return SavingsEstimate(
-            requests_avoided=requests_avoided,
+            exact_requests_avoided=exact_requests_avoided,
+            semantic_requests_avoidable=semantic_requests_avoidable,
+            requests_avoided=total_requests_avoided,
+            exact_tokens_avoided=exact_tokens_avoided,
+            semantic_tokens_avoidable=semantic_tokens_avoidable,
             tokens_avoided=total_tokens_avoided,
-            input_tokens_avoided=dup_in_avoided,
-            output_tokens_avoided=dup_out_avoided,
+            total_potential_tokens_avoided=total_potential_tokens_avoided,
+            input_tokens_avoided=exact_input_tokens_avoided,
+            output_tokens_avoided=exact_output_tokens_avoided,
             estimated_cost_saved_usd=cost_saved,
             latency_improvement_potential_ms=lat_imp,
+            details={
+                "source": "exact duplicates confirmed; semantic redundancy is potential only",
+                "duplicate_event_ids": sorted(dup_res.duplicate_event_ids),
+                "semantic_pair_count": semantic_requests_avoidable,
+                "token_analysis": tok_res.to_dict() if tok_res else {},
+                "latency_assumption": "p95 > 2000 ms suggests possible latency reduction from caching/context reduction",
+            },
         )
 
     def simulate(
@@ -255,23 +288,50 @@ class Optimizer:
 
         orig_requests = len(events)
         orig_tokens = tokens.total_tokens if tokens else sum(e.total_tokens for e in events)
+        dup_res = duplicates or DuplicateDetector().analyze(events)
+        sim_res = similarity
 
-        savings = self.estimate_savings(
-            events=events,
-            duplicates=duplicates,
-            similarity=similarity,
-            tokens=tokens,
+        exact_requests_avoided = dup_res.duplicate_count
+        exact_tokens_avoided = dup_res.wasted_total_tokens
+        semantic_requests_avoidable = sim_res.similar_pair_count if sim_res else 0
+        semantic_tokens_avoidable = sim_res.potential_redundant_tokens if sim_res else 0
+
+        requests_avoided = exact_requests_avoided
+        tokens_avoided = exact_tokens_avoided
+        optimized_requests = max(0, orig_requests - requests_avoided)
+        optimized_tokens = max(0, orig_tokens - tokens_avoided)
+
+        request_reduction_percent = (
+            (requests_avoided / orig_requests) * 100.0 if orig_requests > 0 else 0.0
         )
-
-        opt_requests = max(1, orig_requests - savings.requests_avoided)
-        opt_tokens = max(0, orig_tokens - savings.tokens_avoided)
+        token_reduction_percent = (
+            (tokens_avoided / orig_tokens) * 100.0 if orig_tokens > 0 else 0.0
+        )
 
         return OptimizationSimulation(
             original_requests=orig_requests,
-            optimized_requests=opt_requests,
-            requests_avoided=savings.requests_avoided,
+            optimized_requests=optimized_requests,
+            requests_avoided=requests_avoided,
+            request_reduction_percent=request_reduction_percent,
             original_tokens=orig_tokens,
-            optimized_tokens=opt_tokens,
-            tokens_avoided=savings.tokens_avoided,
-            estimated_cost_saved_usd=savings.estimated_cost_saved_usd,
+            optimized_tokens=optimized_tokens,
+            tokens_avoided=tokens_avoided,
+            token_reduction_percent=token_reduction_percent,
+            estimated_cost_saved_usd=None,
+            assumptions={
+                "confirmed_savings": "Only exact duplicates are treated as guaranteed avoided requests/tokens.",
+                "potential_savings": "Semantic redundancies are listed separately and not treated as guaranteed avoided work.",
+                "formula": "optimized_requests = original_requests - exact_requests_avoided; optimized_tokens = original_tokens - exact_tokens_avoided",
+            },
+            details={
+                "assumptions": {
+                    "confirmed_savings": "Only exact duplicates are treated as guaranteed avoided requests/tokens.",
+                    "potential_savings": "Semantic redundancies are listed separately and not treated as guaranteed avoided work.",
+                    "formula": "optimized_requests = original_requests - exact_requests_avoided; optimized_tokens = original_tokens - exact_tokens_avoided",
+                },
+                "exact_requests_avoided": exact_requests_avoided,
+                "semantic_requests_avoidable": semantic_requests_avoidable,
+                "semantic_tokens_avoidable": semantic_tokens_avoidable,
+                "potential_total_tokens_avoided": exact_tokens_avoided + semantic_tokens_avoidable,
+            },
         )

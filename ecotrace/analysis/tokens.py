@@ -18,21 +18,8 @@ from ecotrace.storage.models import RequestEvent
 class TokenStats:
     """Aggregate token usage statistics and waste metrics.
 
-    Attributes:
-        total_input_tokens: Sum of all input tokens.
-        total_output_tokens: Sum of all output tokens.
-        total_tokens: Sum of all tokens.
-        avg_input_tokens: Average input tokens per request.
-        avg_output_tokens: Average output tokens per request.
-        avg_total_tokens: Average total tokens per request.
-        max_input_tokens: Maximum input tokens in a single request.
-        max_output_tokens: Maximum output tokens in a single request.
-        duplicate_input_tokens: Input tokens wasted on exact duplicate requests.
-        duplicate_output_tokens: Output tokens wasted on exact duplicate requests.
-        duplicate_tokens: Total tokens wasted on exact duplicate requests.
-        potential_semantic_redundant_tokens: Tokens spent on semantically similar requests.
-        total_wasted_tokens: Sum of exact duplicate tokens + potential semantic tokens.
-        request_count: Number of requests analyzed.
+    Exact duplicate waste is confirmed redundant work.
+    Semantic redundancy is a potential signal and is kept separate.
     """
     total_input_tokens: int = 0
     total_output_tokens: int = 0
@@ -49,6 +36,16 @@ class TokenStats:
     total_wasted_tokens: int = 0
     request_count: int = 0
 
+    @property
+    def exact_duplicate_tokens(self) -> int:
+        """Confirmed waste attributable to exact duplicate requests."""
+        return self.duplicate_tokens
+
+    @property
+    def total_potential_waste(self) -> int:
+        """Total combined potential waste from exact duplicates and semantic redundancy."""
+        return self.total_wasted_tokens
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary."""
         return {
@@ -63,7 +60,9 @@ class TokenStats:
             "duplicate_input_tokens": self.duplicate_input_tokens,
             "duplicate_output_tokens": self.duplicate_output_tokens,
             "duplicate_tokens": self.duplicate_tokens,
+            "exact_duplicate_tokens": self.exact_duplicate_tokens,
             "potential_semantic_redundant_tokens": self.potential_semantic_redundant_tokens,
+            "total_potential_waste": self.total_potential_waste,
             "total_wasted_tokens": self.total_wasted_tokens,
             "request_count": self.request_count,
         }

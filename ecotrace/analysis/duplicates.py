@@ -95,6 +95,21 @@ class DuplicateAnalysisResult:
     duplicate_event_ids: Set[str] = field(default_factory=set)
     duplicate_groups: List[DuplicateGroup] = field(default_factory=list)
 
+    @property
+    def exact_duplicate_tokens(self) -> int:
+        """Backward-compatible alias for exact duplicate token waste."""
+        return self.wasted_total_tokens
+
+    @property
+    def exact_duplicate_input_tokens(self) -> int:
+        """Exact duplicate input token waste."""
+        return self.wasted_input_tokens
+
+    @property
+    def exact_duplicate_output_tokens(self) -> int:
+        """Exact duplicate output token waste."""
+        return self.wasted_output_tokens
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary."""
         return {
@@ -104,6 +119,9 @@ class DuplicateAnalysisResult:
             "wasted_input_tokens": self.wasted_input_tokens,
             "wasted_output_tokens": self.wasted_output_tokens,
             "wasted_total_tokens": self.wasted_total_tokens,
+            "exact_duplicate_tokens": self.exact_duplicate_tokens,
+            "exact_duplicate_input_tokens": self.exact_duplicate_input_tokens,
+            "exact_duplicate_output_tokens": self.exact_duplicate_output_tokens,
             "duplicate_event_ids": list(self.duplicate_event_ids),
             "duplicate_groups": [g.to_dict() for g in self.duplicate_groups],
         }
