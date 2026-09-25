@@ -35,6 +35,17 @@ class CarbonEstimate:
     energy_kwh: float = 0.0
     request_count: int = 0
 
+    def to_dict(self) -> dict:
+        """Serialize carbon estimate to dictionary."""
+        return {
+            "total_gco2": round(self.total_gco2, 4),
+            "total_kgco2": round(self.total_kgco2, 6),
+            "grid_intensity_gco2_kwh": self.grid_intensity_gco2_kwh,
+            "energy_kwh": round(self.energy_kwh, 6),
+            "request_count": self.request_count,
+        }
+
+
 
 class CarbonEstimator:
     """Estimates carbon footprint of AI workloads.
