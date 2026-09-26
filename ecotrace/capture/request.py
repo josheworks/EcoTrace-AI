@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
+from ecotrace.utils.sanitization import redact_secrets
+
 
 @dataclass
 class RequestCapture:
@@ -24,6 +26,11 @@ class RequestCapture:
     provider: str
     model: str
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Sanitize metadata to remove any secret API keys or credentials."""
+        if self.metadata:
+            self.metadata = redact_secrets(self.metadata)
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to a plain dictionary."""

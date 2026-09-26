@@ -2400,6 +2400,10 @@
     // Initialize application on load
     window.addEventListener('DOMContentLoaded', () => {
       navigate('overview');
+      // Auto-poll every 2.5 seconds for real-time live telemetry updates
+      setInterval(() => {
+        refreshCurrentPage();
+      }, 2500);
     });
   </script>
 </body>

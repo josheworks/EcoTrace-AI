@@ -41,6 +41,7 @@ def create_app(db_path: str = "ecotrace.db") -> FastAPI:
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
         app.mount("/ecotrace/static", StaticFiles(directory=STATIC_DIR), name="ecotrace_static")
+        app.mount("/ecotrace-ai/static", StaticFiles(directory=STATIC_DIR), name="ecotrace_ai_static")
 
     # Root Route: Backend information
     @app.get("/")
@@ -50,7 +51,7 @@ def create_app(db_path: str = "ecotrace.db") -> FastAPI:
             "name": "EcoTrace AI",
             "status": "running",
             "health": "/health",
-            "dashboard": "/ecotrace/",
+            "dashboard": "/ecotrace-ai/",
             "api": "/api/",
         }
 
@@ -60,9 +61,11 @@ def create_app(db_path: str = "ecotrace.db") -> FastAPI:
         """Health check endpoint returning system status."""
         return {"status": "healthy"}
 
-    # Dashboard HTML routes (accessible at /ecotrace/ and /ecotrace)
+    # Dashboard HTML routes (accessible at /ecotrace-ai/, /ecotrace-ai, /ecotrace/, /ecotrace)
     @app.get("/ecotrace", response_class=HTMLResponse)
     @app.get("/ecotrace/", response_class=HTMLResponse)
+    @app.get("/ecotrace-ai", response_class=HTMLResponse)
+    @app.get("/ecotrace-ai/", response_class=HTMLResponse)
     async def dashboard() -> HTMLResponse:
         """Serve the dashboard single-page interface."""
         html_file = STATIC_DIR / "dashboard.html"

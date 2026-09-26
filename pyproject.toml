@@ -3,14 +3,14 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ecotrace-sdk"
+name = "ecotrace-ai"
 version = "0.1.1"
 description = "Production-oriented AI workload observability and optimization SDK"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
-    {name = "DC"}
+    {name = "EcoTrace AI Team"}
 ]
 keywords = [
     "ai",
@@ -21,7 +21,7 @@ keywords = [
     "ecoscore",
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -31,16 +31,26 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
-dependencies = []
+dependencies = [
+    "fastapi>=0.90.0",
+    "uvicorn>=0.20.0",
+]
+
+[project.scripts]
+ecotrace = "ecotrace.cli:main"
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
+    "httpx>=0.23.0",
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ecotrace*"]
+
+[tool.setuptools.package-data]
+"ecotrace.dashboard" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

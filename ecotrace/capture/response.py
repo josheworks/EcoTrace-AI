@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from ecotrace.utils.sanitization import redact_secrets
+
 
 @dataclass
 class ResponseCapture:
@@ -30,9 +32,11 @@ class ResponseCapture:
     provider_metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Calculate total tokens if not explicitly provided."""
+        """Calculate total tokens if not explicitly provided and sanitize provider_metadata."""
         if self.total_tokens == 0 and (self.input_tokens or self.output_tokens):
             self.total_tokens = self.input_tokens + self.output_tokens
+        if self.provider_metadata:
+            self.provider_metadata = redact_secrets(self.provider_metadata)
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to a plain dictionary."""
