@@ -17,6 +17,7 @@ from ecotrace.exceptions import (
     StorageError,
     ValidationError,
 )
+from ecotrace.dashboard.app import create_app, run_dashboard
 from ecotrace.integrations.decorators import track
 from ecotrace.storage.models import RequestEvent, TrackingResult
 
@@ -30,6 +31,8 @@ __all__ = [
     "WorkloadReport",
     "WorkloadAnalyzer",
     "track",
+    "create_app",
+    "run_dashboard",
     # Exceptions
     "EcoTraceError",
     "ConfigurationError",

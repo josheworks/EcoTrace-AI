@@ -1497,11 +1497,6 @@
   <!-- Dashboard JavaScript Application Logic -->
   <script>
     // State management
-    function formatCost(val, decimals = 4) {
-      if (val === null || val === undefined) return 'N/A';
-      return '$' + Number(val).toFixed(decimals);
-    }
-
     const state = {
       currentPage: 'overview',
       timeRange: 'all',
@@ -1584,7 +1579,7 @@
         document.getElementById('kpiOutputTokens').textContent = k.output_tokens.toLocaleString();
         document.getElementById('kpiAvgLatency').textContent = `${k.avg_latency_ms} ms`;
         document.getElementById('kpiLatencyP50').textContent = `P50: ${data.latency_distribution.p50} ms | P95: ${data.latency_distribution.p95} ms`;
-        document.getElementById('kpiEstimatedCost').textContent = formatCost(k.estimated_cost_usd, 4);
+        document.getElementById('kpiEstimatedCost').textContent = `$${k.estimated_cost_usd.toFixed(4)}`;
         document.getElementById('kpiDuplicateRequests').textContent = k.duplicate_requests.toLocaleString();
         document.getElementById('kpiDuplicateRate').textContent = `${k.duplicate_rate_pct}% duplicate rate`;
 
@@ -1606,7 +1601,7 @@
         document.getElementById('ecoEnergyWh').textContent = `${k.energy.total_wh.toFixed(4)} Wh`;
         document.getElementById('ecoCarbonG').textContent = `${k.carbon.total_gco2.toFixed(4)} gCO2`;
         document.getElementById('ecoWastedTokens').textContent = k.wasted_tokens.toLocaleString();
-        document.getElementById('ecoWastedCost').textContent = formatCost(k.wasted_cost_usd, 4);
+        document.getElementById('ecoWastedCost').textContent = `$${k.wasted_cost_usd.toFixed(4)}`;
 
         // Render Charts
         renderOverviewCharts(data);
@@ -1716,7 +1711,7 @@
             legend: { display: false },
             tooltip: {
               callbacks: {
-                label: ctx => ctx.parsed.y !== null && ctx.parsed.y !== undefined ? `Estimated Cost: ${formatCost(ctx.parsed.y, 4)}` : 'Cost: N/A'
+                label: ctx => `Estimated Cost: $${ctx.parsed.y.toFixed(4)}`
               }
             }
           },
@@ -1724,7 +1719,7 @@
             y: {
               beginAtZero: true,
               grid: { color: '#f1f5f9' },
-              ticks: { callback: v => formatCost(v, 3) }
+              ticks: { callback: v => `$${v.toFixed(3)}` }
             },
             x: { grid: { display: false } }
           }
@@ -1748,7 +1743,7 @@
           <td>${m.output_tokens.toLocaleString()}</td>
           <td>${m.tokens.toLocaleString()}</td>
           <td>${m.avg_latency} ms</td>
-          <td>${formatCost(m.cost, 4)}</td>
+          <td>$${m.cost.toFixed(4)}</td>
           <td>${m.duplicates > 0 ? `<span class="kpi-badge badge-amber">${m.duplicates} repeats</span>` : `<span class="kpi-badge badge-gray">0</span>`}</td>
         </tr>
       `).join('');
@@ -1819,7 +1814,7 @@
           <td>${r.output_tokens.toLocaleString()}</td>
           <td style="font-weight: 600;">${r.total_tokens.toLocaleString()}</td>
           <td>${r.latency_ms} ms</td>
-          <td>${formatCost(r.estimated_cost_usd, 4)}</td>
+          <td>$${r.estimated_cost_usd.toFixed(4)}</td>
           <td>
             ${r.is_duplicate 
               ? `<span class="kpi-badge badge-amber" title="Occurrence #${r.occurrence_number} of this fingerprint">Repeated (#${r.occurrence_number})</span>` 
@@ -1879,7 +1874,7 @@
         document.getElementById('dOutputTokens').textContent = d.usage.output_tokens.toLocaleString();
         document.getElementById('dTotalTokens').textContent = d.usage.total_tokens.toLocaleString();
         document.getElementById('dLatency').textContent = `${d.usage.latency_ms} ms`;
-        document.getElementById('dCost').textContent = formatCost(d.usage.estimated_cost_usd, 6);
+        document.getElementById('dCost').textContent = `$${d.usage.estimated_cost_usd.toFixed(6)}`;
 
         // Content
         document.getElementById('dPromptContent').textContent = d.content.prompt;
@@ -1925,7 +1920,7 @@
         document.getElementById('fpTotalUnique').textContent = data.summary.unique_fingerprints.toLocaleString();
         document.getElementById('fpRepeatedCount').textContent = data.summary.repeated_fingerprints.toLocaleString();
         document.getElementById('fpTokenSavings').textContent = `${data.summary.potential_savings_tokens.toLocaleString()} tokens`;
-        document.getElementById('fpCostSavings').textContent = formatCost(data.summary.potential_savings_cost_usd, 4);
+        document.getElementById('fpCostSavings').textContent = `$${data.summary.potential_savings_cost_usd.toFixed(4)}`;
 
         // Render Table
         const tbody = document.getElementById('fingerprintsTableBody');
@@ -1945,9 +1940,9 @@
             <td><span class="kpi-badge badge-gray">${escapeHtml(f.provider)}</span></td>
             <td style="max-width: 240px; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary);" title="${escapeHtml(f.prompt_preview)}">${escapeHtml(f.prompt_preview)}</td>
             <td>${f.total_tokens.toLocaleString()}</td>
-            <td>${formatCost(f.estimated_cost_usd, 4)}</td>
+            <td>$${f.estimated_cost_usd.toFixed(4)}</td>
             <td style="color: ${f.potential_savings_tokens > 0 ? 'var(--emerald)' : 'var(--text-muted)'}; font-weight: 600;">
-              ${f.potential_savings_tokens > 0 ? `${f.potential_savings_tokens.toLocaleString()} tok (${formatCost(f.potential_savings_cost_usd, 4)})` : '-'}
+              ${f.potential_savings_tokens > 0 ? `${f.potential_savings_tokens.toLocaleString()} tok ($${f.potential_savings_cost_usd.toFixed(4)})` : '-'}
             </td>
             <td style="color: var(--text-muted); font-size: 12px;">${formatTimestamp(f.first_seen)}</td>
             <td style="color: var(--text-muted); font-size: 12px;">${formatTimestamp(f.last_seen)}</td>
@@ -1998,7 +1993,7 @@
             <td>${m.p50_latency_ms} ms</td>
             <td>${m.p95_latency_ms} ms</td>
             <td>${m.p99_latency_ms} ms</td>
-            <td style="font-weight: 600;">${formatCost(m.estimated_cost_usd, 4)}</td>
+            <td style="font-weight: 600;">$${m.estimated_cost_usd.toFixed(4)}</td>
             <td>
               <span class="kpi-badge ${m.duplicate_rate_pct > 15 ? 'badge-amber' : 'badge-gray'}">${m.duplicate_rate_pct}% (${m.duplicate_count})</span>
             </td>
@@ -2132,7 +2127,7 @@
             maintainAspectRatio: false,
             plugins: { legend: { display: false } },
             scales: {
-              y: { beginAtZero: true, ticks: { callback: v => formatCost(v, 3) } },
+              y: { beginAtZero: true, ticks: { callback: v => `$${v.toFixed(3)}` } },
               x: { grid: { display: false } }
             }
           }
@@ -2328,8 +2323,8 @@
         tbody.innerHTML = pKeys.map(k => `
           <tr>
             <td style="font-weight: 600;">${escapeHtml(k)}</td>
-            <td>${formatCost(data.pricing[k].input, 6)}</td>
-            <td>${formatCost(data.pricing[k].output, 6)}</td>
+            <td>$${data.pricing[k].input.toFixed(6)}</td>
+            <td>$${data.pricing[k].output.toFixed(6)}</td>
           </tr>
         `).join('');
 
@@ -2400,10 +2395,6 @@
     // Initialize application on load
     window.addEventListener('DOMContentLoaded', () => {
       navigate('overview');
-      // Auto-poll every 2.5 seconds for real-time live telemetry updates
-      setInterval(() => {
-        refreshCurrentPage();
-      }, 2500);
     });
   </script>
 </body>

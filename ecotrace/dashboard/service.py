@@ -82,26 +82,10 @@ class DashboardService:
                 return events
         return events
 
-    def _calculate_event_cost(self, event: RequestEvent) -> Optional[float]:
+    def _calculate_event_cost(self, event: RequestEvent) -> float:
         """Calculate estimated cost for a single event."""
         res = self.cost_calculator.estimate([event])
         return res.total_cost_usd
-
-    @staticmethod
-    def _round_cost(val: Optional[float], digits: int = 4) -> Optional[float]:
-        """Safely round cost float or return None if cost is unavailable."""
-        if val is None:
-            return None
-        return round(val, digits)
-
-    @staticmethod
-    def _sum_costs(costs: List[Optional[float]]) -> Optional[float]:
-        """Sum costs list, returning None if pricing is unavailable for any item or list is empty without pricing."""
-        if not costs:
-            return None
-        if any(c is None for c in costs):
-            return None
-        return sum(c for c in costs if c is not None)
 
     def _index_fingerprints(self, events: List[RequestEvent]) -> Dict[str, List[RequestEvent]]:
         """Group events by their deterministic request_hash, sorted chronologically."""
@@ -131,30 +115,29 @@ class DashboardService:
         fp_groups = self._index_fingerprints(events)
         duplicate_count = 0
         wasted_tokens = 0
-        wasted_costs: List[Optional[float]] = []
+        wasted_cost = 0.0
 
         for h, group in fp_groups.items():
             if len(group) > 1:
                 repeats = group[1:]  # Everything after the first occurrence
                 duplicate_count += len(repeats)
                 wasted_tokens += sum(e.total_tokens for e in repeats)
-                for e in repeats:
-                    wasted_costs.append(self._calculate_event_cost(e))
+                wasted_cost += sum(self._calculate_event_cost(e) for e in repeats)
 
-        wasted_cost = self._sum_costs(wasted_costs)
         duplicate_rate_pct = (duplicate_count / total_requests * 100) if total_requests > 0 else 0.0
 
         # EcoScore calculation
         ecoscore = self.ecoscore_calculator.calculate(
             events=events,
             duplicate_count=duplicate_count,
-            wasted_tokens=wasted_tokens,
+            total_cost_usd=cost_est.total_cost_usd,
+            total_gco2=carbon_est.total_gco2,
         )
 
         # Timeline aggregation (Requests over time & Tokens over time)
         # Group by hour if <= 2 days, else by day
         timeline_buckets: Dict[str, Dict[str, Any]] = defaultdict(
-            lambda: {"requests": 0, "input_tokens": 0, "output_tokens": 0, "costs": [], "duplicates": 0}
+            lambda: {"requests": 0, "input_tokens": 0, "output_tokens": 0, "cost": 0.0, "duplicates": 0}
         )
 
         # Determine interval format
@@ -174,7 +157,7 @@ class DashboardService:
             bucket["requests"] += 1
             bucket["input_tokens"] += e.input_tokens
             bucket["output_tokens"] += e.output_tokens
-            bucket["costs"].append(self._calculate_event_cost(e))
+            bucket["cost"] += self._calculate_event_cost(e)
             if e.request_hash:
                 if e.request_hash in seen_hashes:
                     bucket["duplicates"] += 1
@@ -184,7 +167,7 @@ class DashboardService:
         request_series = [timeline_buckets[k]["requests"] for k in timeline_labels]
         input_token_series = [timeline_buckets[k]["input_tokens"] for k in timeline_labels]
         output_token_series = [timeline_buckets[k]["output_tokens"] for k in timeline_labels]
-        cost_series = [self._round_cost(self._sum_costs(timeline_buckets[k]["costs"]), 4) for k in timeline_labels]
+        cost_series = [round(timeline_buckets[k]["cost"], 4) for k in timeline_labels]
 
         # Model usage summary table & chart
         model_groups: Dict[str, List[RequestEvent]] = defaultdict(list)
@@ -209,7 +192,7 @@ class DashboardService:
                 "tokens": m_tokens,
                 "input_tokens": sum(e.input_tokens for e in m_events),
                 "output_tokens": sum(e.output_tokens for e in m_events),
-                "cost": self._round_cost(m_cost, 4),
+                "cost": round(m_cost, 4),
                 "avg_latency": round(m_lat, 1),
                 "duplicates": m_dups,
             })
@@ -221,7 +204,7 @@ class DashboardService:
                 "input_tokens": token_stats.total_input_tokens,
                 "output_tokens": token_stats.total_output_tokens,
                 "avg_latency_ms": round(latency_stats.avg_latency_ms, 1),
-                "estimated_cost_usd": self._round_cost(cost_est.total_cost_usd, 4),
+                "estimated_cost_usd": round(cost_est.total_cost_usd, 4),
                 "duplicate_requests": duplicate_count,
                 "duplicate_rate_pct": round(duplicate_rate_pct, 1),
                 "ecoscore": {
@@ -238,7 +221,7 @@ class DashboardService:
                     "total_kgco2": carbon_est.total_kgco2,
                 },
                 "wasted_tokens": wasted_tokens,
-                "wasted_cost_usd": self._round_cost(wasted_cost, 4),
+                "wasted_cost_usd": round(wasted_cost, 4),
             },
             "latency_distribution": {
                 "avg": round(latency_stats.avg_latency_ms, 1),
@@ -339,10 +322,7 @@ class DashboardService:
         if sort_by == "latency":
             filtered.sort(key=lambda x: x.latency_ms, reverse=reverse)
         elif sort_by == "cost":
-            filtered.sort(
-                key=lambda x: (self._calculate_event_cost(x) is None, self._calculate_event_cost(x) or 0.0),
-                reverse=reverse,
-            )
+            filtered.sort(key=lambda x: self._calculate_event_cost(x), reverse=reverse)
         elif sort_by == "tokens":
             filtered.sort(key=lambda x: x.total_tokens, reverse=reverse)
         else:  # timestamp
@@ -374,7 +354,7 @@ class DashboardService:
                 "output_tokens": e.output_tokens,
                 "total_tokens": e.total_tokens,
                 "latency_ms": round(e.latency_ms, 1),
-                "estimated_cost_usd": self._round_cost(cost, 5),
+                "estimated_cost_usd": round(cost, 5),
                 "is_duplicate": fp_info["is_duplicate"],
                 "occurrence_number": fp_info["occurrence_number"],
                 "total_occurrences": fp_info["total_occurrences"],
@@ -445,7 +425,7 @@ class DashboardService:
                 "output_tokens": event.output_tokens,
                 "total_tokens": event.total_tokens,
                 "latency_ms": round(event.latency_ms, 2),
-                "estimated_cost_usd": self._round_cost(cost, 6),
+                "estimated_cost_usd": round(cost, 6),
             },
             "content": {
                 "prompt": prompt_display_formatted,
@@ -477,7 +457,7 @@ class DashboardService:
         total_unique_fps = len(groups)
         repeated_fps_count = 0
         total_wasted_tokens = 0
-        total_wasted_costs: List[Optional[float]] = []
+        total_wasted_cost = 0.0
 
         for h, evts in groups.items():
             occurrences = len(evts)
@@ -485,14 +465,12 @@ class DashboardService:
                 repeated_fps_count += 1
                 repeats = evts[1:]
                 total_wasted_tokens += sum(e.total_tokens for e in repeats)
-                for e in repeats:
-                    total_wasted_costs.append(self._calculate_event_cost(e))
+                total_wasted_cost += sum(self._calculate_event_cost(e) for e in repeats)
 
             first_evt = evts[0]
             last_evt = evts[-1]
             tot_tokens = sum(e.total_tokens for e in evts)
-            tot_cost = self._sum_costs([self._calculate_event_cost(e) for e in evts])
-            savings_cost = self._sum_costs([self._calculate_event_cost(e) for e in evts[1:]]) if occurrences > 1 else None
+            tot_cost = sum(self._calculate_event_cost(e) for e in evts)
 
             # Prompt snippet
             p = first_evt.prompt
@@ -512,9 +490,11 @@ class DashboardService:
                 "provider": first_evt.provider,
                 "prompt_preview": preview,
                 "total_tokens": tot_tokens,
-                "estimated_cost_usd": self._round_cost(tot_cost, 5),
+                "estimated_cost_usd": round(tot_cost, 5),
                 "potential_savings_tokens": sum(e.total_tokens for e in evts[1:]) if occurrences > 1 else 0,
-                "potential_savings_cost_usd": self._round_cost(savings_cost, 5),
+                "potential_savings_cost_usd": round(
+                    sum(self._calculate_event_cost(e) for e in evts[1:]) if occurrences > 1 else 0.0, 5
+                ),
             }
 
             # Filter
@@ -534,10 +514,7 @@ class DashboardService:
         if sort_by == "tokens":
             records.sort(key=lambda x: x["total_tokens"], reverse=reverse)
         elif sort_by == "cost":
-            records.sort(
-                key=lambda x: (x["estimated_cost_usd"] is None, x["estimated_cost_usd"] or 0.0),
-                reverse=reverse,
-            )
+            records.sort(key=lambda x: x["estimated_cost_usd"], reverse=reverse)
         elif sort_by == "last_seen":
             records.sort(key=lambda x: x["last_seen"] or "", reverse=reverse)
         elif sort_by == "savings":
@@ -547,15 +524,13 @@ class DashboardService:
 
         paginated = records[offset : offset + limit]
 
-        total_wasted_cost = self._sum_costs(total_wasted_costs)
-
         return {
             "total": len(records),
             "summary": {
                 "unique_fingerprints": total_unique_fps,
                 "repeated_fingerprints": repeated_fps_count,
                 "potential_savings_tokens": total_wasted_tokens,
-                "potential_savings_cost_usd": self._round_cost(total_wasted_cost, 4),
+                "potential_savings_cost_usd": round(total_wasted_cost, 4),
             },
             "fingerprints": paginated,
         }
@@ -589,7 +564,7 @@ class DashboardService:
                 "p50_latency_ms": round(lat_stats.p50_latency_ms, 1),
                 "p95_latency_ms": round(lat_stats.p95_latency_ms, 1),
                 "p99_latency_ms": round(lat_stats.p99_latency_ms, 1),
-                "estimated_cost_usd": self._round_cost(cost_est.total_cost_usd, 4),
+                "estimated_cost_usd": round(cost_est.total_cost_usd, 4),
                 "duplicate_count": dups,
                 "duplicate_rate_pct": round(dup_rate, 1),
             })
@@ -615,7 +590,7 @@ class DashboardService:
                 "repeated_requests": 0,
                 "input_tokens": 0,
                 "output_tokens": 0,
-                "costs": [],
+                "cost": 0.0,
                 "latencies": [],
             }
         )
@@ -630,7 +605,7 @@ class DashboardService:
             timeline[bucket]["requests"] += 1
             timeline[bucket]["input_tokens"] += e.input_tokens
             timeline[bucket]["output_tokens"] += e.output_tokens
-            timeline[bucket]["costs"].append(self._calculate_event_cost(e))
+            timeline[bucket]["cost"] += self._calculate_event_cost(e)
             timeline[bucket]["latencies"].append(e.latency_ms)
 
             if e.request_hash:
@@ -648,7 +623,7 @@ class DashboardService:
         repeated_series = [timeline[k]["repeated_requests"] for k in labels]
         input_tokens_series = [timeline[k]["input_tokens"] for k in labels]
         output_tokens_series = [timeline[k]["output_tokens"] for k in labels]
-        cost_series = [self._round_cost(self._sum_costs(timeline[k]["costs"]), 4) for k in labels]
+        cost_series = [round(timeline[k]["cost"], 4) for k in labels]
 
         # Latency percentiles over time
         avg_latency_series = []
@@ -659,11 +634,11 @@ class DashboardService:
         # 2. Provider distribution
         provider_counts: Dict[str, int] = defaultdict(int)
         provider_tokens: Dict[str, int] = defaultdict(int)
-        provider_costs: Dict[str, List[Optional[float]]] = defaultdict(list)
+        provider_cost: Dict[str, float] = defaultdict(float)
         for e in events:
             provider_counts[e.provider] += 1
             provider_tokens[e.provider] += e.total_tokens
-            provider_costs[e.provider].append(self._calculate_event_cost(e))
+            provider_cost[e.provider] += self._calculate_event_cost(e)
 
         # 3. Model distribution
         model_counts: Dict[str, int] = defaultdict(int)
@@ -675,16 +650,15 @@ class DashboardService:
         # 4. Overall Efficiency Report using EcoTrace's EfficiencyAnalyzer
         fp_groups = self._index_fingerprints(events)
         dups = sum(len(g) - 1 for g in fp_groups.values() if len(g) > 1)
-        lat_stats = self.latency_analyzer.analyze(events)
-        dup_analysis = self.duplicate_detector.analyze(events)
-        token_stats = self.token_analyzer.analyze(events)
+        wasted_toks = sum(sum(e.total_tokens for e in g[1:]) for g in fp_groups.values() if len(g) > 1)
 
         efficiency_report = self.efficiency_analyzer.analyze(
             events=events,
-            duplicates=dup_analysis,
-            tokens=token_stats,
-            latency=lat_stats,
+            duplicate_count=dups,
+            wasted_tokens=wasted_toks,
         )
+
+        lat_stats = self.latency_analyzer.analyze(events)
 
         return {
             "timeline": {
@@ -701,7 +675,7 @@ class DashboardService:
                 "labels": list(provider_counts.keys()),
                 "requests": [provider_counts[k] for k in provider_counts],
                 "tokens": [provider_tokens[k] for k in provider_counts],
-                "cost": [self._round_cost(self._sum_costs(provider_costs[k]), 4) for k in provider_counts],
+                "cost": [round(provider_cost[k], 4) for k in provider_counts],
             },
             "models": {
                 "labels": list(model_counts.keys()),
@@ -740,24 +714,20 @@ class DashboardService:
             dups = caching_res.estimated_savings.get("duplicate_requests", 0)
             wasted_toks = caching_res.estimated_savings.get("tokens", 0)
             fp_groups = self._index_fingerprints(all_events)
-            wasted_cost = self._sum_costs([
-                self._calculate_event_cost(e)
+            wasted_cost = sum(
+                sum(self._calculate_event_cost(e) for e in g[1:])
                 for g in fp_groups.values()
                 if len(g) > 1
-                for e in g[1:]
-            ])
-
-            cost_ev_text = f"${wasted_cost:.4f}" if wasted_cost is not None else "N/A"
-            cost_imp_text = f"avoids ${wasted_cost:.4f} in duplicate API costs" if wasted_cost is not None else "avoids duplicate API costs"
+            )
 
             recommendations.append({
                 "id": "rec_duplicate_caching",
                 "category": "Caching & Latency",
                 "priority": "High" if dups >= 5 else "Medium",
                 "observation": f"Deterministic request analysis identified {dups} redundant execution(s) across identical request fingerprints.",
-                "evidence": f"{dups} duplicate request occurrences detected; {wasted_toks:,} total tokens consumed unnecessarily; {cost_ev_text} estimated API expenditure on repeated calls.",
+                "evidence": f"{dups} duplicate request occurrences detected; {wasted_toks:,} total tokens consumed unnecessarily; ${wasted_cost:.4f} estimated API expenditure on repeated calls.",
                 "suggested_action": "Deploy response caching (e.g. in-memory LRU or Redis key-value store) indexed by deterministic SHA-256 request fingerprint with an application-specific TTL.",
-                "expected_impact": f"Eliminates up to {wasted_toks:,} redundant tokens, {cost_imp_text}, and reduces response latency to ~0 ms for cache hits.",
+                "expected_impact": f"Eliminates up to {wasted_toks:,} redundant tokens, avoids ${wasted_cost:.4f} in duplicate API costs, and reduces response latency to ~0 ms for cache hits.",
                 "confidence": "High (100% deterministic SHA-256 fingerprint match across recorded events)",
             })
 
@@ -770,8 +740,7 @@ class DashboardService:
             cnt = len(group)
             repeats = group[1:]
             w_tokens = sum(e.total_tokens for e in repeats)
-            w_cost = self._sum_costs([self._calculate_event_cost(e) for e in repeats])
-            w_cost_str = f"${w_cost:.4f}" if w_cost is not None else "N/A"
+            w_cost = sum(self._calculate_event_cost(e) for e in repeats)
             model_name = group[0].model
             p = group[0].prompt
             preview = str(p)[:80] + ("..." if len(str(p)) > 80 else "")
@@ -781,9 +750,9 @@ class DashboardService:
                 "category": "Prompt Specific Caching",
                 "priority": "Medium",
                 "observation": f"Fingerprint '{h[:12]}...' on model '{model_name}' was executed {cnt} times.",
-                "evidence": f"{cnt} exact occurrences recorded. Prompt preview: '{preview}'. Total waste across repetitions: {w_tokens:,} tokens, {w_cost_str}.",
+                "evidence": f"{cnt} exact occurrences recorded. Prompt preview: '{preview}'. Total waste across repetitions: {w_tokens:,} tokens, ${w_cost:.4f}.",
                 "suggested_action": f"Pin or cache the static output for this prompt in the client application layer before dispatching to {model_name}.",
-                "expected_impact": f"Directly saves ~{w_tokens:,} tokens and {w_cost_str} with zero risk of prompt drift.",
+                "expected_impact": f"Directly saves ~{w_tokens:,} tokens and ${w_cost:.4f} with zero risk of prompt drift.",
                 "confidence": f"High ({cnt} exact matches recorded in local telemetry)",
             })
 
@@ -804,31 +773,27 @@ class DashboardService:
                 })
 
         # Rule 4: Model Cost Concentration
-        cost_by_model: Dict[str, List[Optional[float]]] = defaultdict(list)
+        cost_by_model: Dict[str, float] = defaultdict(float)
         tokens_by_model: Dict[str, int] = defaultdict(int)
         for e in all_events:
-            cost_by_model[e.model].append(self._calculate_event_cost(e))
+            cost_by_model[e.model] += self._calculate_event_cost(e)
             tokens_by_model[e.model] += e.total_tokens
 
-        all_costs = [c for c_list in cost_by_model.values() for c in c_list]
-        total_cost = self._sum_costs(all_costs)
-
-        if total_cost is not None and total_cost > 0:
-            for m_name, c_list in cost_by_model.items():
-                m_cost = self._sum_costs(c_list)
-                if m_cost is not None:
-                    pct = (m_cost / total_cost) * 100
-                    if pct >= 65 and len(cost_by_model) > 1:
-                        recommendations.append({
-                            "id": f"rec_cost_concentration_{m_name}",
-                            "category": "Cost Management",
-                            "priority": "Low",
-                            "observation": f"Model '{m_name}' accounts for {pct:.1f}% of total estimated AI expenditure (${m_cost:.4f} of ${total_cost:.4f}).",
-                            "evidence": f"{tokens_by_model[m_name]:,} total tokens consumed on {m_name}, generating ${m_cost:.4f} in estimated fees.",
-                            "suggested_action": f"Review whether all requests routed to '{m_name}' strictly require its capabilities or if lightweight models (e.g. mini/flash variants) suffice for simple prompts.",
-                            "expected_impact": "Potential 40-70% cost reduction on high-volume, low-complexity subtasks.",
-                            "confidence": "Moderate (Requires domain evaluation of prompt complexity)",
-                        })
+        total_cost = sum(cost_by_model.values())
+        if total_cost > 0:
+            for m_name, m_cost in cost_by_model.items():
+                pct = (m_cost / total_cost) * 100
+                if pct >= 65 and len(cost_by_model) > 1:
+                    recommendations.append({
+                        "id": f"rec_cost_concentration_{m_name}",
+                        "category": "Cost Management",
+                        "priority": "Low",
+                        "observation": f"Model '{m_name}' accounts for {pct:.1f}% of total estimated AI expenditure (${m_cost:.4f} of ${total_cost:.4f}).",
+                        "evidence": f"{tokens_by_model[m_name]:,} total tokens consumed on {m_name}, generating ${m_cost:.4f} in estimated fees.",
+                        "suggested_action": f"Review whether all requests routed to '{m_name}' strictly require its capabilities or if lightweight models (e.g. mini/flash variants) suffice for simple prompts.",
+                        "expected_impact": "Potential 40-70% cost reduction on high-volume, low-complexity subtasks.",
+                        "confidence": "Moderate (Requires domain evaluation of prompt complexity)",
+                    })
 
         return recommendations
 
