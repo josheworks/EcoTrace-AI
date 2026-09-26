@@ -129,10 +129,11 @@ class WorkloadAnalyzer:
 
     def __init__(
         self,
-        similarity_threshold: float = 0.75,
+        similarity_threshold: float = 0.60,
         similarity_analyzer: Optional[SimilarityAnalyzer] = None,
         optimizer: Optional[Optimizer] = None,
     ) -> None:
+
 
         self.duplicate_detector = DuplicateDetector()
         self.similarity_analyzer = (

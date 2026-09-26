@@ -10,7 +10,8 @@ from ecotrace.storage.models import RequestEvent
 
 class TestSimilarityAnalyzer(unittest.TestCase):
     def setUp(self):
-        self.analyzer = EmbeddingSimilarityAnalyzer(threshold=0.75)
+        self.analyzer = EmbeddingSimilarityAnalyzer(threshold=0.60)
+
 
 
     def test_identical_prompts(self):

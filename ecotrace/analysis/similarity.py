@@ -321,9 +321,10 @@ class EmbeddingSimilarityAnalyzer(SimilarityAnalyzer):
 
     def __init__(
         self,
-        threshold: float = 0.85,
+        threshold: float = 0.60,
         model_name: str = "all-MiniLM-L6-v2",
     ) -> None:
+
         super().__init__(threshold=threshold)
         self.model_name = model_name
         self._encoder = None

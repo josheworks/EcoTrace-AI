@@ -153,9 +153,10 @@ class EcoTrace:
 
     def analyze(
         self,
-        similarity_threshold: float = 0.75,
+        similarity_threshold: float = 0.60,
         limit: int = 1000,
     ) -> WorkloadReport:
+
 
         """Run full multi-signal workload analysis on all tracked events in current session.
 
