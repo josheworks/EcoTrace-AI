@@ -51,7 +51,7 @@ SAMPLE_WORKLOADS = [
     # Workload 4: Fast entity extraction on Groq
     {
         "provider": "groq",
-        "model": "llama-3.1-70b",
+        "model": "openai/gpt-oss-20b",
         "prompt": "Extract person names, organizations, and monetary values from the quarterly earnings disclosure text.",
         "response": "Organizations: [Acme Corp, Nova Holdings]\nPersons: [Jane Doe (CEO), Mark Smith (CFO)]\nMonetary Values: [$45.2M, $12.8M EBITDA]",
         "input_tokens": 310,

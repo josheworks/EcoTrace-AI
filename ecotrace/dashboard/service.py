@@ -82,8 +82,8 @@ class DashboardService:
                 return events
         return events
 
-    def _calculate_event_cost(self, event: RequestEvent) -> float:
-        """Calculate estimated cost for a single event."""
+    def _calculate_event_cost(self, event: RequestEvent) -> Optional[float]:
+        """Return estimated cost, or None when pricing is unavailable."""
         res = self.cost_calculator.estimate([event])
         return res.total_cost_usd
 
@@ -111,6 +111,8 @@ class DashboardService:
         energy_est = self.energy_estimator.estimate(events)
         carbon_est = self.carbon_estimator.estimate(events)
 
+
+
         # Deterministic Duplicate Analysis
         fp_groups = self._index_fingerprints(events)
         duplicate_count = 0
@@ -119,25 +121,36 @@ class DashboardService:
 
         for h, group in fp_groups.items():
             if len(group) > 1:
-                repeats = group[1:]  # Everything after the first occurrence
+                repeats = group[1:]
                 duplicate_count += len(repeats)
                 wasted_tokens += sum(e.total_tokens for e in repeats)
-                wasted_cost += sum(self._calculate_event_cost(e) for e in repeats)
 
-        duplicate_rate_pct = (duplicate_count / total_requests * 100) if total_requests > 0 else 0.0
+                event_costs = [
+                    self._calculate_event_cost(e) for e in repeats
+                ]
+
+                if any(cost is None for cost in event_costs):
+                    wasted_cost = None
+                elif wasted_cost is not None:
+                    wasted_cost += sum(event_costs)
+
+        duplicate_rate_pct = (
+            duplicate_count / total_requests * 100
+            if total_requests > 0
+            else 0.0
+        )
 
         # EcoScore calculation
         ecoscore = self.ecoscore_calculator.calculate(
             events=events,
             duplicate_count=duplicate_count,
-            total_cost_usd=cost_est.total_cost_usd,
-            total_gco2=carbon_est.total_gco2,
+            wasted_tokens=wasted_tokens,    
         )
 
         # Timeline aggregation (Requests over time & Tokens over time)
         # Group by hour if <= 2 days, else by day
         timeline_buckets: Dict[str, Dict[str, Any]] = defaultdict(
-            lambda: {"requests": 0, "input_tokens": 0, "output_tokens": 0, "cost": 0.0, "duplicates": 0}
+            lambda: {"requests": 0, "input_tokens": 0, "output_tokens": 0, "cost": 0.0,"cost_unknown": False, "duplicates": 0}
         )
 
         # Determine interval format
@@ -157,7 +170,13 @@ class DashboardService:
             bucket["requests"] += 1
             bucket["input_tokens"] += e.input_tokens
             bucket["output_tokens"] += e.output_tokens
-            bucket["cost"] += self._calculate_event_cost(e)
+            event_cost = self._calculate_event_cost(e)
+
+            if event_cost is None:
+                bucket["cost_unknown"] = True
+            elif not bucket["cost_unknown"]:
+                bucket["cost"] += event_cost
+
             if e.request_hash:
                 if e.request_hash in seen_hashes:
                     bucket["duplicates"] += 1
@@ -167,7 +186,13 @@ class DashboardService:
         request_series = [timeline_buckets[k]["requests"] for k in timeline_labels]
         input_token_series = [timeline_buckets[k]["input_tokens"] for k in timeline_labels]
         output_token_series = [timeline_buckets[k]["output_tokens"] for k in timeline_labels]
-        cost_series = [round(timeline_buckets[k]["cost"], 4) for k in timeline_labels]
+
+        cost_series = [
+            None if timeline_buckets[k]["cost_unknown"]
+            else round(timeline_buckets[k]["cost"], 4)
+            for k in timeline_labels
+]
+        
 
         # Model usage summary table & chart
         model_groups: Dict[str, List[RequestEvent]] = defaultdict(list)
@@ -175,7 +200,9 @@ class DashboardService:
             model_groups[e.model].append(e)
 
         models_summary: List[Dict[str, Any]] = []
-        for model_name, m_events in sorted(model_groups.items(), key=lambda x: len(x[1]), reverse=True):
+        for model_name, m_events in sorted(
+            model_groups.items(), key=lambda x: len(x[1]), reverse=True
+        ):
             m_cost = self.cost_calculator.estimate(m_events).total_cost_usd
             m_lat = self.latency_analyzer.analyze(m_events).avg_latency_ms
             m_tokens = sum(e.total_tokens for e in m_events)
@@ -192,7 +219,11 @@ class DashboardService:
                 "tokens": m_tokens,
                 "input_tokens": sum(e.input_tokens for e in m_events),
                 "output_tokens": sum(e.output_tokens for e in m_events),
-                "cost": round(m_cost, 4),
+                "cost": (
+                    round(m_cost, 4)
+                    if m_cost is not None
+                    else None),
+
                 "avg_latency": round(m_lat, 1),
                 "duplicates": m_dups,
             })
@@ -204,7 +235,11 @@ class DashboardService:
                 "input_tokens": token_stats.total_input_tokens,
                 "output_tokens": token_stats.total_output_tokens,
                 "avg_latency_ms": round(latency_stats.avg_latency_ms, 1),
-                "estimated_cost_usd": round(cost_est.total_cost_usd, 4),
+                "estimated_cost_usd": (
+                    round(cost_est.total_cost_usd, 4)
+                    if cost_est.total_cost_usd is not None
+                    else None
+                ),
                 "duplicate_requests": duplicate_count,
                 "duplicate_rate_pct": round(duplicate_rate_pct, 1),
                 "ecoscore": {
@@ -221,7 +256,11 @@ class DashboardService:
                     "total_kgco2": carbon_est.total_kgco2,
                 },
                 "wasted_tokens": wasted_tokens,
-                "wasted_cost_usd": round(wasted_cost, 4),
+                                "wasted_cost_usd": (
+                    round(wasted_cost, 4)
+                    if wasted_cost is not None
+                    else None
+                ),
             },
             "latency_distribution": {
                 "avg": round(latency_stats.avg_latency_ms, 1),
@@ -354,7 +393,10 @@ class DashboardService:
                 "output_tokens": e.output_tokens,
                 "total_tokens": e.total_tokens,
                 "latency_ms": round(e.latency_ms, 1),
-                "estimated_cost_usd": round(cost, 5),
+                "estimated_cost_usd": (
+                    round(cost, 5)
+                    if cost is not None
+                    else None),
                 "is_duplicate": fp_info["is_duplicate"],
                 "occurrence_number": fp_info["occurrence_number"],
                 "total_occurrences": fp_info["total_occurrences"],
@@ -564,7 +606,7 @@ class DashboardService:
                 "p50_latency_ms": round(lat_stats.p50_latency_ms, 1),
                 "p95_latency_ms": round(lat_stats.p95_latency_ms, 1),
                 "p99_latency_ms": round(lat_stats.p99_latency_ms, 1),
-                "estimated_cost_usd": round(cost_est.total_cost_usd, 4),
+                "estimated_cost_usd": (round(cost_est.total_cost_usd, 4)if cost_est.total_cost_usd is not None else None),
                 "duplicate_count": dups,
                 "duplicate_rate_pct": round(dup_rate, 1),
             })
@@ -591,6 +633,7 @@ class DashboardService:
                 "input_tokens": 0,
                 "output_tokens": 0,
                 "cost": 0.0,
+                "cost_unknown": False,
                 "latencies": [],
             }
         )
@@ -605,7 +648,16 @@ class DashboardService:
             timeline[bucket]["requests"] += 1
             timeline[bucket]["input_tokens"] += e.input_tokens
             timeline[bucket]["output_tokens"] += e.output_tokens
-            timeline[bucket]["cost"] += self._calculate_event_cost(e)
+            
+            event_cost = self._calculate_event_cost(e)
+
+        if event_cost is None:
+            timeline[bucket]["cost_unknown"] = True
+        elif not timeline[bucket]["cost": 0.0,
+            "cost_unknown": False,
+            "latencies": [],]:
+            timeline[bucket]["cost"] += event_cost
+
             timeline[bucket]["latencies"].append(e.latency_ms)
 
             if e.request_hash:
@@ -623,7 +675,11 @@ class DashboardService:
         repeated_series = [timeline[k]["repeated_requests"] for k in labels]
         input_tokens_series = [timeline[k]["input_tokens"] for k in labels]
         output_tokens_series = [timeline[k]["output_tokens"] for k in labels]
-        cost_series = [round(timeline[k]["cost"], 4) for k in labels]
+        cost_series = [
+            None if timeline[k]["cost_unknown"]
+            else round(timeline[k]["cost"], 4)
+            for k in labels
+]
 
         # Latency percentiles over time
         avg_latency_series = []
@@ -647,16 +703,25 @@ class DashboardService:
             model_counts[e.model] += 1
             model_tokens[e.model] += e.total_tokens
 
-        # 4. Overall Efficiency Report using EcoTrace's EfficiencyAnalyzer
+
+               # 4. Overall Efficiency Report
         fp_groups = self._index_fingerprints(events)
-        dups = sum(len(g) - 1 for g in fp_groups.values() if len(g) > 1)
-        wasted_toks = sum(sum(e.total_tokens for e in g[1:]) for g in fp_groups.values() if len(g) > 1)
+        dups = sum(
+            len(g) - 1 for g in fp_groups.values() if len(g) > 1
+        )
+        wasted_toks = sum(
+            sum(e.total_tokens for e in g[1:])
+            for g in fp_groups.values()
+            if len(g) > 1
+        )
+
+        lat_stats = self.latency_analyzer.analyze(events)
 
         efficiency_report = self.efficiency_analyzer.analyze(
             events=events,
-            duplicate_count=dups,
-            wasted_tokens=wasted_toks,
+            latency=lat_stats,
         )
+
 
         lat_stats = self.latency_analyzer.analyze(events)
 

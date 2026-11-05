@@ -16,6 +16,7 @@ _DEFAULT_PRICING: Dict[str, Dict[str, float]] = {
     "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
     "gemini-1.5-pro": {"input": 0.00125, "output": 0.005},
     "gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},
+    "openai/gpt-oss-20b": {"input": 0.000075, "output": 0.0003},
 }
 
 
@@ -43,7 +44,12 @@ class CostCalculator:
     def __init__(
         self, pricing: Optional[Dict[str, Dict[str, float]]] = None
     ) -> None:
-        self._pricing = dict(pricing or {})
+        self._pricing = {
+        model: rates.copy()
+        for model, rates in (
+            pricing if pricing is not None else _DEFAULT_PRICING
+        ).items()
+}
 
     def set_pricing(
         self, model: str, input_per_1k: float, output_per_1k: float
