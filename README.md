@@ -35,7 +35,7 @@ Local SQLite Telemetry Storage (ecotrace.db)
 EcoTrace Analytics Dashboard & FastAPI Backend
         │
         ▼  Auto-polling every 2.5s
-http://localhost:8000/ecotrace-ai/
+http://localhost:8000/ecotrace/
 ```
 
 - **Provider Agnostic**: Normalized `RequestEvent` abstraction decoupled from vendor SDKs.
@@ -82,7 +82,7 @@ print(f"Tracked Event: {result.event.request_id} | Duplicate: {result.is_duplica
 ecotrace dashboard --port 8000 --db ecotrace.db
 ```
 
-Open `http://localhost:8000/ecotrace-ai/` in your browser. Real-time telemetry automatically appears as requests are processed!
+Open `http://localhost:8000/ecotrace/` in your browser. Real-time telemetry automatically appears as requests are processed!
 
 ---
 
